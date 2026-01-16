@@ -10,37 +10,35 @@ st.set_page_config(page_title="Pro Wave Hunter", layout="wide", page_icon="⚡")
 
 # --- FOREX LİSTESİ ---
 FOREX_PAIRS = [
-    "EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X", # Majors
-    "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURAUD=X", "EURNZD=X", "EURCAD=X", # Euro Cross
-    "GBPJPY=X", "GBPCHF=X", "GBPAUD=X", "GBPNZD=X", "GBPCAD=X", # GBP Cross
-    "AUDJPY=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X", # Yen Cross
-    "AUDCAD=X", "AUDCHF=X", "CADCHF=X", "NZDCAD=X", "NZDCHF=X" # Others
+    "EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X",
+    "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURAUD=X", "EURNZD=X", "EURCAD=X",
+    "GBPJPY=X", "GBPCHF=X", "GBPAUD=X", "GBPNZD=X", "GBPCAD=X",
+    "AUDJPY=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X",
+    "AUDCAD=X", "AUDCHF=X", "CADCHF=X", "NZDCAD=X", "NZDCHF=X",
+    "XAUUSD=X" # Altın sevenler için ekledim
 ]
 
 # --- YAN MENÜ ---
 st.sidebar.header("⚡ Ayarlar")
 
-# 4. Madde: Dropdown Menü
 selected_symbol = st.sidebar.selectbox("Parite Seçiniz", FOREX_PAIRS, index=0)
 
-# Hassasiyet Ayarı
-deviation_pct = st.sidebar.slider("ZigZag Hassasiyeti (%)", 0.5, 5.0, 1.2, step=0.1)
-st.sidebar.caption(f"ℹ️ Pivot oluşması için fiyatın ters yöne en az **%{deviation_pct}** gitmesi gerekir.")
+# Hassasiyet Ayarı (Manuel)
+deviation_pct = st.sidebar.slider("ZigZag Hassasiyeti (%)", 0.1, 5.0, 1.2, step=0.1)
+st.sidebar.caption(f"Değeri yukarıdaki önerilere göre değiştirebilirsin.")
 
-# Güncelleme Butonu
 if st.sidebar.button("🔄 VERİLERİ GÜNCELLE"):
     st.cache_data.clear()
 
 # --- VERİ MOTORU ---
 @st.cache_data
-def get_data(sym, period="5y"): # 7. Madde için uzun veri çekiyoruz
+def get_data(sym, period="5y"): 
     try:
         df = yf.download(sym, period=period, interval="1d", progress=False, auto_adjust=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df.reset_index(inplace=True)
         
-        # Sütun İsimlerini Standartlaştır
         for col in ['Date', 'index', 'Datetime']:
             if col in df.columns:
                 df.rename(columns={col: 'Datetime'}, inplace=True)
@@ -53,6 +51,27 @@ def get_data(sym, period="5y"): # 7. Madde için uzun veri çekiyoruz
         return df
     except:
         return pd.DataFrame()
+
+# --- OPTİMİZASYON HESAPLAYICI (YENİ) ---
+def calculate_optimal_sensitivity(df, days):
+    """
+    Belirtilen gün sayısı (geçmiş) için ideal hassasiyeti önerir.
+    Mantık: O dönemin günlük ortalama volatilitesinin 3 katı (Gürültü Filtresi).
+    """
+    if df.empty: return 0.0
+    
+    start_date = df['Datetime'].iloc[-1] - timedelta(days=days)
+    period_df = df[df['Datetime'] >= start_date].copy()
+    
+    if period_df.empty: return 0.0
+    
+    # Günlük Yüzdesel Değişim (Mutlak)
+    period_df['Daily_Change'] = period_df['Close'].pct_change().abs() * 100
+    avg_volatility = period_df['Daily_Change'].mean()
+    
+    # Sinyal/Gürültü oranı için genelde 3x katsayısı kullanılır
+    suggested = avg_volatility * 3.0
+    return round(suggested, 2)
 
 # --- ZIGZAG HESAPLAMA ---
 def calculate_waves(df, deviation=0.015):
@@ -104,40 +123,46 @@ def calculate_waves(df, deviation=0.015):
 # --- ANA EKRAN ---
 st.title(f"⚡ {selected_symbol} Analiz Terminali")
 
-# Veri Çek (5 Yıllık - Analiz için gerekli)
+# Veri Çek
 df = get_data(selected_symbol, "5y")
 
 if not df.empty and 'Close' in df.columns:
     
-    # ZigZag Hesapla
+    # --- 1. ÖNERİLEN HASSASİYET KUTULARI (YENİ) ---
+    opt_3m = calculate_optimal_sensitivity(df, 90)
+    opt_1y = calculate_optimal_sensitivity(df, 365)
+    opt_2y = calculate_optimal_sensitivity(df, 730)
+    
+    st.subheader("🎯 Önerilen Hassasiyet Ayarları")
+    c_opt1, c_opt2, c_opt3, c_opt4 = st.columns(4)
+    
+    c_opt1.info(f"**Son 3 Ayın** Karakteri:\n# %{opt_3m}")
+    c_opt2.info(f"**Son 1 Yılın** Karakteri:\n# %{opt_1y}")
+    c_opt3.info(f"**Son 2 Yılın** Karakteri:\n# %{opt_2y}")
+    c_opt4.markdown("👈 *Sol menüdeki slider'ı bu değerlerden birine ayarlayabilirsin.*")
+
+    # ZigZag Hesapla (Kullanıcının Seçtiği Değerle)
     waves_df, pivots_df = calculate_waves(df, deviation=deviation_pct/100)
     
-    # --- 5. MADDE: VOLATİLİTE ENDEKSİ (EURUSD BAZLI) ---
-    eur_df = get_data("EURUSD=X", "1y") # Baz veri
+    # --- VOLATİLİTE ENDEKSİ ---
+    eur_df = get_data("EURUSD=X", "1y")
     if not eur_df.empty:
         w_eur, _ = calculate_waves(eur_df, deviation=deviation_pct/100)
-        avg_eur_move = w_eur['Abs_Change'].mean()
+        avg_eur_move = w_eur['Abs_Change'].mean() if not w_eur.empty else 1.0
         
-        # Seçilen paritenin son 1 yılı
         last_1y_start = df['Datetime'].iloc[-1] - timedelta(days=365)
         w_curr_1y = waves_df[waves_df['Start_Date'] >= last_1y_start]
-        avg_curr_move = w_curr_1y['Abs_Change'].mean()
+        avg_curr_move = w_curr_1y['Abs_Change'].mean() if not w_curr_1y.empty else 1.0
         
         volatility_score = avg_curr_move / avg_eur_move if avg_eur_move > 0 else 1.0
         
-        col_vol1, col_vol2 = st.columns([3, 1])
-        with col_vol1:
-            st.markdown(f"### 📊 Volatilite Skoru: **{volatility_score:.2f}x**")
-            st.caption(f"(EURUSD = 1.00 baz alınmıştır. Bu parite EURUSD'den {volatility_score:.2f} kat daha hareketlidir.)")
-            st.progress(min(volatility_score/3, 1.0)) # Bar göstergesi
+        st.markdown(f"**Volatilite Skoru:** `{volatility_score:.2f}x` (Baz: EURUSD)")
 
-    # --- 7. MADDE: TARİHSEL KIYASLAMA TABLOSU ---
+    # --- TARİHSEL TABLO ---
     st.markdown("---")
-    st.subheader("🕰️ Dönemsel Dalga Ortalamaları")
     
     periods = {'Son 1 Yıl': 365, 'Son 2 Yıl': 730, 'Son 5 Yıl': 1825}
     comparison_data = []
-    
     current_date = df['Datetime'].iloc[-1]
     
     for label, days in periods.items():
@@ -154,71 +179,60 @@ if not df.empty and 'Close' in df.columns:
             'Dalga Sayısı': len(period_waves)
         })
         
-    st.table(pd.DataFrame(comparison_data).set_index('Dönem'))
-
-    # --- 2. MADDE: GÜNCEL İSTATİSTİKLER ---
-    # Son 1 yılı baz alarak genel istatistik verelim
-    stats_waves = waves_df[waves_df['Start_Date'] >= (current_date - timedelta(days=365))]
+    col_table, col_metrics = st.columns([2, 1])
+    with col_table:
+        st.subheader("🕰️ Dönemsel Ortalamalar")
+        st.table(pd.DataFrame(comparison_data).set_index('Dönem'))
     
-    bull_stats = stats_waves[stats_waves['Direction'] == "YÜKSELİŞ"]
-    bear_stats = stats_waves[stats_waves['Direction'] == "DÜŞÜŞ"]
+    with col_metrics:
+        # Son 1 Yıl Detayı
+        stats_waves = waves_df[waves_df['Start_Date'] >= (current_date - timedelta(days=365))]
+        bull_stats = stats_waves[stats_waves['Direction'] == "YÜKSELİŞ"]
+        bear_stats = stats_waves[stats_waves['Direction'] == "DÜŞÜŞ"]
+        
+        st.subheader("📊 Son 1 Yıl Detayı")
+        st.metric("Yükseliş Adedi", f"{len(bull_stats)}")
+        st.metric("Düşüş Adedi", f"{len(bear_stats)}")
+
+    # --- CANLI DURUM & GRAFİK ---
     
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Ort. Yükseliş (1Y)", f"%{bull_stats['Abs_Change'].mean():.2f}")
-    col2.metric("Yükseliş Adedi", f"{len(bull_stats)}")
-    col3.metric("Ort. Düşüş (1Y)", f"%{bear_stats['Abs_Change'].mean():.2f}") # 2. Madde
-    col4.metric("Düşüş Adedi", f"{len(bear_stats)}") # 2. Madde
-
-    # --- 3. MADDE: PİVOT OLUŞTURAN DEĞİŞİM ---
-    st.info(f"""
-    ℹ️ **BİLGİ:** Seçtiğin %{deviation_pct} hassasiyetine göre;
-    Bir tepenin "Tepe" olarak işaretlenmesi için fiyatın oradan **%{deviation_pct}** düşmesi beklendi.
-    Bir dibin "Dip" olarak işaretlenmesi için fiyatın oradan **%{deviation_pct}** yükselmesi beklendi.
-    """)
-
-    # --- 7. MADDE EKİ: CANLI UYARI MEKANİZMASI ---
-    # Son tamamlanmamış (current) dalgayı kontrol et
+    # Uyarı Sistemi
     current_price = df['Close'].iloc[-1]
-    last_pivot = pivots_df.iloc[-2] # Current'dan önceki son kesinleşmiş pivot
-    
-    # Şu anki hareketin yüzdesi
+    last_pivot = pivots_df.iloc[-2]
     current_move_pct = abs((current_price - last_pivot['Price']) / last_pivot['Price']) * 100
     current_dir = "YÜKSELİŞ" if current_price > last_pivot['Price'] else "DÜŞÜŞ"
-    
-    # 5 Yıllık ortalama ile kıyasla
     long_term_waves = waves_df[waves_df['Direction'] == current_dir]
-    long_term_avg = long_term_waves['Abs_Change'].mean()
+    long_term_avg = long_term_waves['Abs_Change'].mean() if not long_term_waves.empty else 0.1
     
-    st.subheader(f"📡 Canlı Durum: {current_dir} Dalgası İçindeyiz")
-    c1, c2 = st.columns([1, 3])
-    c1.metric("Anlık Dalga Boyu", f"%{current_move_pct:.2f}")
+    st.markdown("---")
+    st.subheader(f"📡 Canlı Durum: {current_dir} Dalgası")
     
-    # Uyarı Mantığı
+    alert_col1, alert_col2 = st.columns([1, 3])
+    alert_col1.metric("Anlık Hareket", f"%{current_move_pct:.2f}")
+    
     if current_move_pct >= long_term_avg * 0.8:
-        st.warning(f"⚠️ **DÖNÜŞ SİNYALİ:** Mevcut hareket (%{current_move_pct:.2f}), uzun vadeli ortalamaya (%{long_term_avg:.2f}) yaklaştı veya geçti. Dönüş ihtimali artıyor!")
+        alert_col2.warning(f"⚠️ **DÖNÜŞ BÖLGESİ:** Hareket (%{current_move_pct:.2f}), uzun vadeli ortalamaya (%{long_term_avg:.2f}) yaklaştı.")
     else:
-        st.success(f"✅ **DEVAM:** Mevcut hareket (%{current_move_pct:.2f}), ortalamanın (%{long_term_avg:.2f}) henüz altında. Alanı var.")
+        alert_col2.success(f"✅ **ALANI VAR:** Hareket (%{current_move_pct:.2f}), ortalamanın (%{long_term_avg:.2f}) altında ilerliyor.")
 
-
-    # --- 1. MADDE: GRAFİK (SARI ÇİZGİLER) ---
+    # GRAFİK
     fig = go.Figure()
-
-    # Mumlar
     fig.add_trace(go.Candlestick(x=df['Datetime'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'))
 
-    # SARI ZIGZAG
+    # SARI ZIGZAG (Daha Şeffaf ve İnce)
     fig.add_trace(go.Scatter(x=pivots_df['Date'], y=pivots_df['Price'], 
-                             mode='lines+markers+text', 
-                             name='Dalga Yapısı', 
-                             line=dict(color='yellow', width=3), # 1. Madde: Sarı Renk
-                             marker=dict(size=8, color='yellow'),
-                             text=[f"{p['Price']:.4f}" for p in pivots_df.to_dict('records')],
-                             textposition="top center"))
+                             mode='lines+markers', # Text'i kaldırdım kalabalık olmasın diye
+                             name='Trend Yapısı', 
+                             # RGBA(Red, Green, Blue, Alpha) -> 0.6 Alpha ile %60 Görünürlük (Şeffaf)
+                             line=dict(color='rgba(255, 215, 0, 0.65)', width=2), 
+                             marker=dict(size=5, color='rgba(255, 215, 0, 0.8)')))
 
-    fig.update_layout(title=f"{selected_symbol} ZigZag Analizi (Son 5 Yıldan Görünüm)", 
+    fig.update_layout(title=f"{selected_symbol} Yapısal Analiz", 
                       template="plotly_dark", height=700,
-                      xaxis_rangeslider_visible=False) # Alt slider'ı gizle
+                      xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
+    
+    st.info(f"ℹ️ Pivot Teyit Eşiği: **%{deviation_pct}** (Seçili Ayar)")
 
 else:
     st.error("Veri bekleniyor... (Piyasa kapalı olabilir veya sembol hatalı)")
