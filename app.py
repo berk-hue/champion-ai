@@ -8,24 +8,34 @@ from datetime import timedelta
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Pro Wave Hunter", layout="wide", page_icon="⚡")
 
-# --- FOREX LİSTESİ ---
-FOREX_PAIRS = [
+# --- ENSTRÜMAN LİSTESİ (GÜNCELLENDİ) ---
+ASSET_LIST = [
+    # --- KRİPTO & ENDEKS ---
+    "BTC-USD", "ETH-USD",  # Kripto
+    "NQ=F",  # Nasdaq 100 Futures
+    
+    # --- EMTİA (FUTURES & SPOT) ---
+    "GC=F", "SI=F",  # Altın ve Gümüş (Futures)
+    "XAUUSD=X",      # Altın (Spot Forex)
+    
+    # --- FOREX MAJORS ---
     "EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X",
+    
+    # --- FOREX CROSSES ---
     "EURGBP=X", "EURJPY=X", "EURCHF=X", "EURAUD=X", "EURNZD=X", "EURCAD=X",
     "GBPJPY=X", "GBPCHF=X", "GBPAUD=X", "GBPNZD=X", "GBPCAD=X",
     "AUDJPY=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X",
-    "AUDCAD=X", "AUDCHF=X", "CADCHF=X", "NZDCAD=X", "NZDCHF=X",
-    "XAUUSD=X" # Altın sevenler için ekledim
+    "AUDCAD=X", "AUDCHF=X", "CADCHF=X", "NZDCAD=X", "NZDCHF=X"
 ]
 
 # --- YAN MENÜ ---
 st.sidebar.header("⚡ Ayarlar")
 
-selected_symbol = st.sidebar.selectbox("Parite Seçiniz", FOREX_PAIRS, index=0)
+selected_symbol = st.sidebar.selectbox("Enstrüman Seçiniz", ASSET_LIST, index=6) # Varsayılan EURUSD
 
 # Hassasiyet Ayarı (Manuel)
-deviation_pct = st.sidebar.slider("ZigZag Hassasiyeti (%)", 0.1, 5.0, 1.2, step=0.1)
-st.sidebar.caption(f"Değeri yukarıdaki önerilere göre değiştirebilirsin.")
+deviation_pct = st.sidebar.slider("ZigZag Hassasiyeti (%)", 0.1, 10.0, 1.2, step=0.1)
+st.sidebar.caption(f"Kripto ve Endekslerde hassasiyeti yükseltmen gerekebilir.")
 
 if st.sidebar.button("🔄 VERİLERİ GÜNCELLE"):
     st.cache_data.clear()
@@ -34,6 +44,7 @@ if st.sidebar.button("🔄 VERİLERİ GÜNCELLE"):
 @st.cache_data
 def get_data(sym, period="5y"): 
     try:
+        # Kripto 7/24 açık olduğu için onlarda veri kaybı olmasın diye auto_adjust kapatıyoruz
         df = yf.download(sym, period=period, interval="1d", progress=False, auto_adjust=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -52,7 +63,7 @@ def get_data(sym, period="5y"):
     except:
         return pd.DataFrame()
 
-# --- OPTİMİZASYON HESAPLAYICI (YENİ) ---
+# --- OPTİMİZASYON HESAPLAYICI ---
 def calculate_optimal_sensitivity(df, days):
     """
     Belirtilen gün sayısı (geçmiş) için ideal hassasiyeti önerir.
@@ -66,7 +77,8 @@ def calculate_optimal_sensitivity(df, days):
     if period_df.empty: return 0.0
     
     # Günlük Yüzdesel Değişim (Mutlak)
-    period_df['Daily_Change'] = period_df['Close'].pct_change().abs() * 100
+    # Kripto ve Endekslerde gap/haftasonu farkı olabileceği için fillna ekledik
+    period_df['Daily_Change'] = period_df['Close'].pct_change().abs().fillna(0) * 100
     avg_volatility = period_df['Daily_Change'].mean()
     
     # Sinyal/Gürültü oranı için genelde 3x katsayısı kullanılır
@@ -128,7 +140,7 @@ df = get_data(selected_symbol, "5y")
 
 if not df.empty and 'Close' in df.columns:
     
-    # --- 1. ÖNERİLEN HASSASİYET KUTULARI (YENİ) ---
+    # --- ÖNERİLEN HASSASİYET KUTULARI ---
     opt_3m = calculate_optimal_sensitivity(df, 90)
     opt_1y = calculate_optimal_sensitivity(df, 365)
     opt_2y = calculate_optimal_sensitivity(df, 730)
@@ -139,15 +151,15 @@ if not df.empty and 'Close' in df.columns:
     c_opt1.info(f"**Son 3 Ayın** Karakteri:\n# %{opt_3m}")
     c_opt2.info(f"**Son 1 Yılın** Karakteri:\n# %{opt_1y}")
     c_opt3.info(f"**Son 2 Yılın** Karakteri:\n# %{opt_2y}")
-    c_opt4.markdown("👈 *Sol menüdeki slider'ı bu değerlerden birine ayarlayabilirsin.*")
+    c_opt4.markdown("👈 *Sol menüdeki slider'ı (Hassasiyet) bu değerlere göre ayarlayabilirsin.*")
 
-    # ZigZag Hesapla (Kullanıcının Seçtiği Değerle)
+    # ZigZag Hesapla
     waves_df, pivots_df = calculate_waves(df, deviation=deviation_pct/100)
     
     # --- VOLATİLİTE ENDEKSİ ---
     eur_df = get_data("EURUSD=X", "1y")
     if not eur_df.empty:
-        w_eur, _ = calculate_waves(eur_df, deviation=deviation_pct/100)
+        w_eur, _ = calculate_waves(eur_df, deviation=1.2/100) # EURUSD için standart 1.2 kabul edelim
         avg_eur_move = w_eur['Abs_Change'].mean() if not w_eur.empty else 1.0
         
         last_1y_start = df['Datetime'].iloc[-1] - timedelta(days=365)
@@ -195,8 +207,6 @@ if not df.empty and 'Close' in df.columns:
         st.metric("Düşüş Adedi", f"{len(bear_stats)}")
 
     # --- CANLI DURUM & GRAFİK ---
-    
-    # Uyarı Sistemi
     current_price = df['Close'].iloc[-1]
     last_pivot = pivots_df.iloc[-2]
     current_move_pct = abs((current_price - last_pivot['Price']) / last_pivot['Price']) * 100
@@ -219,11 +229,10 @@ if not df.empty and 'Close' in df.columns:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(x=df['Datetime'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'))
 
-    # SARI ZIGZAG (Daha Şeffaf ve İnce)
+    # SARI ZIGZAG (Şeffaf Altın Sarısı)
     fig.add_trace(go.Scatter(x=pivots_df['Date'], y=pivots_df['Price'], 
-                             mode='lines+markers', # Text'i kaldırdım kalabalık olmasın diye
+                             mode='lines+markers', 
                              name='Trend Yapısı', 
-                             # RGBA(Red, Green, Blue, Alpha) -> 0.6 Alpha ile %60 Görünürlük (Şeffaf)
                              line=dict(color='rgba(255, 215, 0, 0.65)', width=2), 
                              marker=dict(size=5, color='rgba(255, 215, 0, 0.8)')))
 
@@ -235,4 +244,4 @@ if not df.empty and 'Close' in df.columns:
     st.info(f"ℹ️ Pivot Teyit Eşiği: **%{deviation_pct}** (Seçili Ayar)")
 
 else:
-    st.error("Veri bekleniyor... (Piyasa kapalı olabilir veya sembol hatalı)")
+    st.error("Veri bekleniyor... (Sembol hatalı veya piyasa kapalı)")
